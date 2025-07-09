@@ -1,0 +1,480 @@
+#!/bin/bash
+
+# Script for take system backup using rsync.
+# written by Gian Luca Vagnuzzi <vagnu00@gmx.com>
+#
+# rev. 06.07.2025
+
+function envs_check {
+LOG_DIR="/var/log/backup"
+DATA_DIR="/root/.rsbackup"
+required_commands="rsync nslookup"
+BCK_NAME=$1
+CONFIG_FILE="$DATA_DIR/config_$BCK_NAME"
+RSYNC_EXCLUSIONS="$DATA_DIR/exclusions_$BCK_NAME"
+LOG_MAIL="/tmp/backup-"$BCK_NAME"-mail.log"
+: ${bckF:=0}
+: ${debugRun:=0}
+: ${verboseRun:=0}
+
+if [ ! -e $LOG_DIR ]; then
+ mkdir -p $LOG_DIR 2>/dev/null
+ [ $? != 0 ] && echo "Problem in making log dir (LOG_DIR=$LOG_DIR)." && exit 1
+fi
+
+if [ ! -e $DATA_DIR ]; then
+ mkdir -p $DATA_DIR 2>/dev/null
+ [ $? != 0 ] && echo "Problem in making data dir (DATA_DIR=$DATA_DIR)." && exit 1
+fi
+
+# if run as root
+[ $(whoami) != root ] && echo "Need to be root!!" && exit 1
+
+# check if are present needed commands
+check_required_commands $required_commands
+
+# source config_file or create it for new host
+[ -e $CONFIG_FILE ] && source $CONFIG_FILE || new_host
+
+# set backup type
+if [ -z $BACKUP_TYPE ]; then
+ if [ $month -eq 12 ] && [ $day -eq 31 ] && [ $bkd -eq 0 ]; then
+  BACKUP_TYPE=MONTHLY
+ elif [ $month -eq 12 ] && [ $day -eq 31 ]; then
+  BACKUP_TYPE=YEARLY
+ elif [ $month -eq 02 ] && [ $day -eq 29 ]; then
+  BACKUP_TYPE=MONTHLY
+ elif [ $month -eq 02 ] && [ $leapyear = 0 ] && [ $day -eq 28 ]; then
+  BACKUP_TYPE=MONTHLY
+ elif [ $month -eq 04 ] || [ $month = 06 ] || [ $month = 09 ] || [ $month = 11 ] && [ $day -eq 30 ]; then
+  BACKUP_TYPE=MONTHLY
+ elif [ $day -eq 31 ]; then
+  BACKUP_TYPE=MONTHLY
+ elif [ $day_week -eq 6 ]; then
+  BACKUP_TYPE=WEEKLY
+ else
+  BACKUP_TYPE=DAILY
+ fi
+fi
+
+# check if need to run backup
+if [ $bckF = 0 ]; then
+ [ $bky -eq 0 ] && [ $bkm -eq 0 ] && [ $bkw -eq 0 ] && [ $bkd -eq 0 ] && exit 1
+ [ $bkm -eq 0 ] && [ $BACKUP_TYPE = MONTHLY ] && exit 1
+ [ $bkw -eq 0 ] && [ $BACKUP_TYPE = WEEKLY ] && exit 1
+ [ $bkd -eq 0 ] && [ $BACKUP_TYPE = DAILY ] && exit 1
+fi
+
+# if destination path doesn't exist, exit
+[ ! -e $TRG_PATH ] && echo "$TRG_PATH doesn't exist!" && exit 1
+
+# if the host is already created & is the machine itself, it does not use SSH
+if [ $BCK_HOST = localhost ]; then
+ USER_HOST="" SSH_OPT=""
+else
+ USER_HOST=""$SSH_USER"@"$BCK_HOST":"
+fi
+
+if [ $BCK_HOST != localhost ]; then
+ ping -c1 -W1 $BCK_HOST &>/dev/null
+ export RETVAL=$(echo $?)
+ [ $RETVAL != 0 ] && echo "$BCK_HOST is not reachable." && exit 1
+fi
+
+# load base script environment
+rsyncOpt+=" --archive --human-readable --sparse --stats --numeric-ids --delete --delete-excluded"
+#SSH_OPT="-e 'ssh -x -T -c aes128-ctr -o Compression=no -o ControlMaster=no -o ControlPath=none'"
+SSH_OPT="-e 'ssh -x -T -c aes128-gcm@openssh.com -o Compression=no -o ControlMaster=no -o ControlPath=none'"
+
+# load job env & checks
+RSYNC_EXCLUSIONS_OPT="--exclude-from=$RSYNC_EXCLUSIONS"
+_old_backup_dir=""
+
+LOG_RSYNC="$LOG_DIR/$BCK_NAME.log"
+LOG_ERROR="/tmp/backup-"$BCK_NAME"-error.log"
+TRG_host=""$TRG_PATH"/$BCK_NAME"
+TRGy=""$TRG_host"/4-yearly"
+TRGm=""$TRG_host"/3-monthly"
+TRGw=""$TRG_host"/2-weekly"
+TRGd=""$TRG_host"/1-daily"
+
+# if not present, set '/' to the end of $SRC_PATH variable
+echo "$SRC_PATH" | grep -q /$ || SRC_PATH+='/'
+
+# set backup dest dir
+[ $BACKUP_TYPE = YEARLY ]  && TRGdest=$TRGy
+[ $BACKUP_TYPE = MONTHLY ] && TRGdest=$TRGm
+[ $BACKUP_TYPE = WEEKLY ]  && TRGdest=$TRGw
+[ $BACKUP_TYPE = DAILY ]   && TRGdest=$TRGd
+
+# make backup dest dir
+if [ ! -e $TRGdest ] && [ $debugRun = 0 ] ; then
+ mkdir -p $TRGdest 2>/dev/null
+ [ $? != 0 ] && echo "Problem in making dest backup dir (TRGdest=$TRGdest)." && exit 1
+fi
+
+# Check for previous backups
+if ! $(find $TRG_host -mindepth 2 -maxdepth 2 -type d -exec false {} +); then
+ _old_backup_dir=$(find $TRG_host -mindepth 2 -maxdepth 2 -type d | sort -t '/' -k6 | tail -1)
+ rsyncOpt+=" --link-dest=$_old_backup_dir"
+fi
+
+# if today backup is already present & backup is NOT forced, exit
+[ ! -z $_old_backup_dir ] && [ $_old_backup_dir = $TRGdest/$today ] && [ $bckF = 0 ] && echo "Backup $TRGdest/$today is already done!" && exit 1
+}
+
+function fn_rsync_backup {
+# make rsync command
+RSYNC_COMMAND="rsync $rsyncOpt --rsync-path=$CMD_REMOTE_RSYNC \
+ --filter='dir-merge,n- .rsync-exclude' \
+ --log-file=$LOG_RSYNC $RSYNC_EXCLUSIONS_OPT $SSH_OPT \
+ "$USER_HOST""$SRC_PATH" $TRGdest/$today 2> $LOG_ERROR"
+
+echo "$(date +%Y%m%d-%H:%M:%S) -- START BACKUP --"
+echo -e "\nDestination server: $(hostname)"
+echo      "       Source host: $BCK_HOST"
+echo -e "\n            Backup: $BACKUP_TYPE"
+echo -e "\n        SOURCE DIR: $SRC_PATH"
+echo      "   DESTINATION DIR: $TRGdest/$today"
+echo      "     RSYNC COMMAND: $RSYNC_COMMAND"
+
+# launch rsync command
+eval $RSYNC_COMMAND
+export RETVAL=$?
+
+echo      "            RETVAL: $RETVAL"
+
+## define result variables
+if [ $RETVAL = 23 ] || [ $RETVAL = 24 ]; then
+ OUTCOME="[Warning]"
+elif [ $RETVAL = 0 ]; then
+ OUTCOME="[Success]"
+else
+ OUTCOME="[Failed]"
+fi
+echo      "     Backup result: $OUTCOME"
+
+echo -e "\n$(date +%Y%m%d-%H:%M:%S) ----- END BACKUP -----"
+
+# make symbolic link...
+if [ $OUTCOME != "[Failed]" ]; then
+
+ # ...for last backup
+ find $TRG_host -maxdepth 1 -type l | xargs rm 2>/dev/null
+
+ # make symbolic link for others backup
+ if [ $BACKUP_TYPE = YEARLY ]; then
+  ln -s $TRGy/$today $TRG_host/$today
+ elif [ $BACKUP_TYPE = MONTHLY ]; then
+  ln -s $TRGm/$today $TRG_host/$today
+ elif [ $BACKUP_TYPE = WEEKLY ]; then
+  ln -s $TRGw/$today $TRG_host/$today
+ elif [ $BACKUP_TYPE = DAILY ]; then
+  ln -s $TRGd/$today $TRG_host/$today
+ fi
+ #if [ $BACKUP_TYPE = YEARLY ]; then
+ # if [ $bkm != 0 ]; then
+ #  [ ! -e $TRGm ] && mkdir -p $TRGm
+ #  ln -s $TRGy/$today $TRGm/$today
+ # fi
+ # if [ $day_week = 6 ] && [ $bks != 0 ]; then
+ #  [ ! -e $TRGw ] && mkdir -p $TRGw
+ #  ln -s $TRGy/$today $TRGw/$today
+ # fi
+ # if [ $bkd != 0 ]; then
+ #  [ ! -e $TRGd ] && mkdir -p $TRGd
+ #  ln -s $TRGy/$today $TRGd/$today
+ # fi
+ #elif [ $BACKUP_TYPE = MONTHLY ]; then
+ # if [ $day_week = 6 ] && [ $bkw != 0 ]; then
+ #  [ ! -e $TRGw ] && mkdir -p $TRGw
+ #  ln -s $TRGm/$today $TRGw/$today
+ # fi
+ # if [ $bkd != 0 ]; then
+ #  [ ! -e $TRGd ] && mkdir -p $TRGd
+ #  ln -s $TRGm/$today $TRGd/$today
+ # fi
+ #elif [ $BACKUP_TYPE = WEEKLY ]; then
+ # if [ $bkd != 0 ]; then
+ #  [ ! -e $TRGd ] && mkdir -p $TRGd
+ #  ln -s $TRGw/$today $TRGd/$today
+ # fi
+ #fi
+
+fi
+
+## deleting older backup
+echo -e "\n$(date +%Y%m%d-%H:%M) ---- Start cleaning old backups ----"
+if [ $OUTCOME != "[Failed]" ] && [ $bckF = 0 ]; then
+ [ $bky = 0 ] && [ -e "$TRGy" ] && echo "Yearly folder cleaning..."  && ls -l $TRGy && rm -rf $TRGy 2>/dev/null
+ [ $bkm = 0 ] && [ -e "$TRGm" ] && echo "Monthly folder cleaning..." && ls -l $TRGm && rm -rf $TRGm 2>/dev/null
+ [ $bkw = 0 ] && [ -e "$TRGw" ] && echo "Weekly folder cleaning..."  && ls -l $TRGw && rm -rf $TRGw 2>/dev/null
+ [ $bkd = 0 ] && [ -e "$TRGd" ] && echo "Daily folder cleaning..."   && ls -l $TRGd && rm -rf $TRGd 2>/dev/null
+ echo "Yearly retentions cleaning..."
+ [ -e "$TRGy" ] && tmpfile=$(mktemp) && find "$TRGy"/* -maxdepth 0 -type d 2>/dev/null | sort | head -n -"$bky" | tee $tmpfile && cat $tmpfile | xargs rm -rf
+ echo "Monthly retentions cleaning..."
+ [ -e "$TRGm" ] && tmpfile=$(mktemp) && find "$TRGm"/* -maxdepth 0 -type d 2>/dev/null | sort | head -n -"$bkm" | tee $tmpfile && cat $tmpfile | xargs rm -rf
+ echo "Weekly retentions cleaning..."
+ [ -e "$TRGw" ] && tmpfile=$(mktemp) && find "$TRGw"/* -maxdepth 0 -type d 2>/dev/null | sort | head -n -"$bkw" | tee $tmpfile && cat $tmpfile | xargs rm -rf
+ echo "Daily retentions cleaning..."
+ [ -e "$TRGd" ] && tmpfile=$(mktemp) && find "$TRGd"/* -maxdepth 0 -type d 2>/dev/null | sort | head -n -"$bkd" | tee $tmpfile && cat $tmpfile | xargs rm -rf
+ echo "Broken symbolic links cleaning..."
+ [ -e "$TRGy" ] && tmpfile=$(mktemp) && find -L "$TRGy" -maxdepth 1 -type l | tee $tmpfile && [ -s $tmpfile ] && cat $tmpfile | xargs rm
+ [ -e "$TRGm" ] && tmpfile=$(mktemp) && find -L "$TRGm" -maxdepth 1 -type l | tee $tmpfile && [ -s $tmpfile ] && cat $tmpfile | xargs rm
+ [ -e "$TRGw" ] && tmpfile=$(mktemp) && find -L "$TRGw" -maxdepth 1 -type l | tee $tmpfile && [ -s $tmpfile ] && cat $tmpfile | xargs rm
+ [ -e "$TRGd" ] && tmpfile=$(mktemp) && find -L "$TRGd" -maxdepth 1 -type l | tee $tmpfile && [ -s $tmpfile ] && cat $tmpfile | xargs rm
+ echo "Empty folders cleaning..."
+ [ -e "$TRGy" ] && [ -z "$(ls -A "$TRGy")" ] && echo "$TRGy" && rmdir "$TRGy"
+ [ -e "$TRGm" ] && [ -z "$(ls -A "$TRGm")" ] && echo "$TRGm" && rmdir "$TRGm"
+ [ -e "$TRGw" ] && [ -z "$(ls -A "$TRGw")" ] && echo "$TRGw" && rmdir "$TRGw"
+ [ -e "$TRGd" ] && [ -z "$(ls -A "$TRGd")" ] && echo "$TRGd" && rmdir "$TRGy"
+ echo -e "\n$(date +%Y%m%d-%H:%M) ---- END deleting old backups ----"
+else
+ [ $OUTCOME = "[Failed]" ] && echo "CAUSE RETVAL ERROR, OLD BACKUPS HAVE NOT BEEN DELETED!"
+ [ $bckF = 1 ] && echo "CAUSE FORCED BACKUP, OLD BACKUPS HAVE NOT BEEN DELETED!"
+fi
+
+## list available backups
+echo -e "\nBACKUP AVAILABLE:"
+[ -d $TRGy ] && cd $TRGy && echo -e "\n- YEARLY:\n$(find . -maxdepth 1 -mindepth 1 ! -type l 2>/dev/null | sort)"
+[ -d $TRGm ] && cd $TRGm && echo -e "\n- MONTHLY:\n$(find . -maxdepth 1 -mindepth 1 ! -type l 2>/dev/null | sort)"
+[ -d $TRGw ] && cd $TRGw && echo -e "\n- WEEKLY:\n$(find . -maxdepth 1 -mindepth 1 ! -type l 2>/dev/null | sort)"
+[ -d $TRGd ] && cd $TRGd && echo -e "\n- DAILY:\n$(find . -maxdepth 1 -mindepth 1 ! -type l 2>/dev/null | sort)"
+
+## df for filesystem status
+echo -e "\nDISK USAGE:"
+## if localhost, the df does it local otherwise in ssh on the remote machine
+if [ $BCK_HOST != localhost ]; then
+ ping -c1 -W1 $BCK_HOST &>/dev/null
+ export RETVAL=$(echo $?)
+ [ $RETVAL = 0 ] &&  echo "$(ssh $SSH_USER@$BCK_HOST /usr/bin/df -h | grep -E -v 'loop|overlay|tmpfs')" || echo "$BCK_HOST is not reachable."
+else
+ echo "$(df -h | grep -E -v 'loop|overlay|tmpfs')"
+fi
+
+if [ $RETVAL != 0 ]; then
+  echo "*********************"
+  echo "!*! ERROR DETAILS !*!"
+  echo "vvvvvvvvvvvvvvvvvvvvv"
+  cat $LOG_ERROR
+  echo "---------------------"
+fi
+
+# send email report
+if [ $debugRun = 0 ]; then
+ if $( which mail >/dev/null 2>&1 ); then
+  cat $LOG_MAIL | mail -s "${OUTCOME} $(echo $BCK_NAME | tr [:lower:] [:upper:]) - $(LC_ALL=C date +"%A, %d %B %Y, %H:%M:%S")" -r $SRC_MAIL $DEST_MAIL
+ else
+  echo "Backup of $(echo $BCK_NAME | tr [:lower:] [:upper:]) = ${OUTCOME} - See log $LOG_RSYNC for more details."
+ fi
+fi
+
+# merge mail at syslog
+[ $debugRun = 0 ] && cat $LOG_MAIL >> $LOG_RSYNC
+}
+
+function new_host {
+echo -e "\nHost \"$BCK_NAME\" had never been backupped, create configuration files:\n"
+nslookup $BCK_NAME >/dev/null
+if [ $? != 0 ]; then
+echo "------!!!!! ATTENTION !!!!!------
+--> $BCK_NAME <-- seems to be a host NOT properly reachable!
+Check hostname or add an entry in the local /etc/hosts file."
+fi
+
+# make config file
+echo "SRC_MAIL="backup@domain.com"
+DEST_MAIL="root"
+BCK_HOST="$BCK_NAME"
+SRC_PATH="/"
+TRG_PATH="/srv/backup"
+SSH_USER="root"
+CMD_REMOTE_RSYNC="/usr/bin/rsync"
+
+## number of old backups to keep
+bky="1" # years
+bkm="2" # months
+bkw="4" # weeks
+bkd="6" # days
+
+## enable follow variables will override for testing
+#year=2024
+#month=01
+#day=06
+#day_week=6" > $CONFIG_FILE
+
+# make exclusion file
+echo '- lost+found
+- /dev/*
+- /mnt/*
+- /net/*
+- /media/*
+- /proc/*
+- /run/*
+- /sys/*
+- /var/lib/docker/*
+- 00DELETE
+- t*mp
+- *[C|c]ache*
+- *[T|t]rash*
+- Scaricati' > $RSYNC_EXCLUSIONS
+
+#[ ! -e $CONFIG_FILE ]      && cp $DATA_DIR/.config_tpl $CONFIG_FILE          && echo "Config file for $BCK_NAME was successfully created."     || echo "!!! Config file for $BCK_NAME is already present."
+#[ ! -e $RSYNC_EXCLUSIONS ] && cp $DATA_DIR/.exclusions_tpl $RSYNC_EXCLUSIONS && echo "Exclusions file for $BCK_NAME was successfully created." || echo "!!! Exclusions file for $BCK_NAME is already present."
+
+echo -e "\nConfig file = $CONFIG_FILE"
+echo -e "Exclusions file = $RSYNC_EXCLUSIONS\n"
+echo -e "Please, relauch "$0 -b $BCK_NAME" for backup!\n"
+exit 1
+}
+
+function _usage {
+cat << EOF
+
+rsBackup - Backup script based on rsync
+
+Usage:
+# ${0##*/} -b <host2bebackupped> [-t DAILY|WEEKLY|MONTHLY|YEARLY] [-f|-V|-d|-D]
+
+OPTIONS
+ -b | --backup <HOST_BACKUP>         manually execute script with <HOST_BACKUP>.conf
+
+ -t | --type <BACKUP_TYPE> force a backup type;
+
+ -f | --forced   force backup execution (for example when there is already a backup done in the same day);
+ -v | --verbose  add --progress option & print log to stdin;
+ -d | --debug    add --progress option & perform a dry-run. Use -d with -v option for print log on the screen;
+
+ -h | --help     usage
+
+BACKUP_TYPE = DAILY, WEEKLY, MONTHLY or YEARLY
+
+Ex:
+# ${0##*/} -b server.domain.com
+# ${0##*/} -b server.domain.com -t WEEKLY
+# ${0##*/} -b server.domain.com -t WEEKLY -vd
+
+EOF
+}
+
+function check_required_commands {
+ # verify if all commands are installed in the system paths
+ for COMMAND in $@; do
+   #which "$COMMAND" >/dev/null 2>&1
+   command -v "$COMMAND" >/dev/null
+   [ $? -ne 0 ] && echo "WARNING: the command '$COMMAND' doesn't exist, please install it and retry!" && exit 1
+ done
+}
+
+function checkBackupType {
+  ! $(echo ${BACKUP_TYPES[@]} | grep -q $BACKUP_TYPE) && echo -e "\n ****** WARNING ******: Backup type '$BACKUP_TYPE' isn't know!" && _usage && exit 1
+}
+
+function cleanTmpFiles {
+rm $@ 2>/dev/null
+}
+
+function backup_start {
+ envs_check $1
+ if [ $debugRun = 1 ]; then
+  fn_rsync_backup
+ elif [ $verboseRun = 1 ]; then
+  fn_rsync_backup | tee -a $LOG_MAIL
+ else
+  fn_rsync_backup > $LOG_MAIL
+ fi
+}
+
+### ----------------- END FUNCTIONS ---------------------------
+
+BACKUP_TYPES=(DAILY WEEKLY MONTHLY YEARLY)
+# date envs
+year=$(date +%Y)
+month=$(date +%m)
+day=$(date +%d)
+day_week=$(date +%u)
+today=$(echo $year-$month-$day)
+# set leapyear variable
+[ $(($year%4)) = 0 ] && [ $(($year%100)) != 0 ] || [ $(($year%400)) = 0 ] && leapyear=1 || leapyear=0
+
+# check arguments
+if [ $# = 0 ]; then
+  # if no arguments, print _usage & exit
+ _usage
+ exit
+elif $(echo $@ | grep -q "\-t") && [ ! -z $6 ]; then
+ _usage
+ echo -e "\n Too may arg!\n"
+ exit
+elif ! $(echo $@ | grep -q "\-t") && [ ! -z $5 ]; then
+ _usage
+ echo -e "\n Too may arg!\n"
+ exit
+fi
+
+# define command options
+_optionsShort="b:t:fvdh"
+_optionsLong="backup:,type:,forced,verbose,debug,help"
+
+# options check
+if ! options=$(getopt -q -o $_optionsShort -l $_optionsLong -- "$@"); then
+  # if some option are not recognized, warn & exit
+  echo "exiting... incorrect options provided. use -h for help";  exit 1
+fi
+
+eval set -- "$options"
+
+while true; do
+case $1 in
+
+  -t|--type)
+  BACKUP_TYPE=$2
+  shift 2
+  checkBackupType
+  ;;
+
+  -b|--backup)
+  host2backup=$2
+  shift 2
+  ;;
+
+  -f|--forced)
+  bckF=1
+  shift
+  ;;
+
+  -v|--verbose)
+  verboseRun=1
+  rsyncOpt+=" --progress"
+  shift
+  ;;
+
+  -d|--debug)
+  debugRun=1
+  rsyncOpt+=" --progress --dry-run"
+  shift
+  ;;
+
+  -h|--help)
+  _usage
+  exit
+  ;;
+
+  --)
+  shift
+  break
+  ;;
+
+  *)
+  echo -e "\nUnrecognized ARG choice! Try again!\n"
+  _usage
+  exit
+  ;;
+
+esac
+done
+
+[ ! -z $host2backup ] && backup_start $host2backup
+
+unset leapyear
+cleanTmpFiles $LOG_MAIL $LOG_ERROR /tmp/tmp.*
