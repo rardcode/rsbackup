@@ -315,6 +315,7 @@ echo '- lost+found
 - /var/lib/docker/*
 - 00DELETE
 - t*mp
+- .swap
 - *[C|c]ache*
 - *[T|t]rash*
 - Scaricati' > $RSYNC_EXCLUSIONS
