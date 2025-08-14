@@ -294,8 +294,8 @@ CMD_REMOTE_RSYNC="/usr/bin/rsync"
 ## number of old backups to keep
 bky="1" # years
 bkm="2" # months
-bkw="4" # weeks
-bkd="6" # days
+bkw="3" # weeks
+bkd="5" # days
 
 ## enable follow variables will override for testing
 #year=2024
