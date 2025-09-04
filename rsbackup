@@ -316,7 +316,6 @@ echo '- lost+found
 - 00DELETE
 - t*mp
 - .swap
-- *[C|c]ache*
 - *[T|t]rash*
 - Scaricati' > $RSYNC_EXCLUSIONS
 
