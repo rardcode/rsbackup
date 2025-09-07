@@ -304,8 +304,7 @@ bkd="5" # days
 #day_week=6" > $CONFIG_FILE
 
 # make exclusion file
-echo '- lost+found
-- /dev/*
+echo '- /dev/*
 - /mnt/*
 - /net/*
 - /media/*
@@ -313,8 +312,8 @@ echo '- lost+found
 - /run/*
 - /sys/*
 - /var/lib/docker/*
+- lost+found
 - 00DELETE
-- t*mp
 - .swap
 - *[T|t]rash*
 - Scaricati' > $RSYNC_EXCLUSIONS
