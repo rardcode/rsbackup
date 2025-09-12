@@ -144,6 +144,10 @@ export RETVAL=$?
 
 echo      "            RETVAL: $RETVAL"
 
+# 12/09/2025 - PROBLEM: rsync output in warning without error in $LOG_ERROR
+# merge error lines of the rsync standard log
+cat $LOG_RSYNC | grep ERROR >> $LOG_ERROR
+
 ## define result variables
 if [ $RETVAL = 23 ] || [ $RETVAL = 24 ]; then
  OUTCOME="[Warning]"
@@ -172,34 +176,6 @@ if [ $OUTCOME != "[Failed]" ]; then
  elif [ $BACKUP_TYPE = DAILY ]; then
   ln -s $TRGd/$today $TRG_host/$today
  fi
- #if [ $BACKUP_TYPE = YEARLY ]; then
- # if [ $bkm != 0 ]; then
- #  [ ! -e $TRGm ] && mkdir -p $TRGm
- #  ln -s $TRGy/$today $TRGm/$today
- # fi
- # if [ $day_week = 6 ] && [ $bks != 0 ]; then
- #  [ ! -e $TRGw ] && mkdir -p $TRGw
- #  ln -s $TRGy/$today $TRGw/$today
- # fi
- # if [ $bkd != 0 ]; then
- #  [ ! -e $TRGd ] && mkdir -p $TRGd
- #  ln -s $TRGy/$today $TRGd/$today
- # fi
- #elif [ $BACKUP_TYPE = MONTHLY ]; then
- # if [ $day_week = 6 ] && [ $bkw != 0 ]; then
- #  [ ! -e $TRGw ] && mkdir -p $TRGw
- #  ln -s $TRGm/$today $TRGw/$today
- # fi
- # if [ $bkd != 0 ]; then
- #  [ ! -e $TRGd ] && mkdir -p $TRGd
- #  ln -s $TRGm/$today $TRGd/$today
- # fi
- #elif [ $BACKUP_TYPE = WEEKLY ]; then
- # if [ $bkd != 0 ]; then
- #  [ ! -e $TRGd ] && mkdir -p $TRGd
- #  ln -s $TRGw/$today $TRGd/$today
- # fi
- #fi
 
 fi
 
