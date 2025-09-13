@@ -140,18 +140,18 @@ echo      "     RSYNC COMMAND: $RSYNC_COMMAND"
 
 # launch rsync command
 eval $RSYNC_COMMAND
-export RETVAL=$?
+export RSYNC_RETVAL=$?
 
-echo      "            RETVAL: $RETVAL"
+echo      "            RETVAL: $RSYNC_RETVAL"
 
 # 12/09/2025 - PROBLEM: rsync output in warning without error in $LOG_ERROR
 # merge error lines of the rsync standard log
 cat $LOG_RSYNC | grep ERROR >> $LOG_ERROR
 
 ## define result variables
-if [ $RETVAL = 23 ] || [ $RETVAL = 24 ]; then
+if [ $RSYNC_RETVAL = 23 ] || [ $RSYNC_RETVAL = 24 ]; then
  OUTCOME="[Warning]"
-elif [ $RETVAL = 0 ]; then
+elif [ $RSYNC_RETVAL = 0 ]; then
  OUTCOME="[Success]"
 else
  OUTCOME="[Failed]"
@@ -223,12 +223,12 @@ echo -e "\nDISK USAGE:"
 if [ $BCK_HOST != localhost ]; then
  ping -c1 -W1 $BCK_HOST &>/dev/null
  export RETVAL=$(echo $?)
- [ $RETVAL = 0 ] &&  echo "$(ssh $SSH_USER@$BCK_HOST /usr/bin/df -h | grep -E -v 'loop|overlay|tmpfs')" || echo "$BCK_HOST is not reachable."
+ [ $RETVAL = 0 ] &&  echo "$(ssh $SSH_USER@$BCK_HOST /usr/bin/df -h -x tmpfs -x overlay)" || echo "$BCK_HOST is not reachable."
 else
- echo "$(df -h | grep -E -v 'loop|overlay|tmpfs')"
+ echo "$(df -h -x tmpfs -x overlay)"
 fi
 
-if [ $RETVAL != 0 ]; then
+if [ $RSYNC_RETVAL != 0 ]; then
   echo "*********************"
   echo "!*! ERROR DETAILS !*!"
   echo "vvvvvvvvvvvvvvvvvvvvv"
