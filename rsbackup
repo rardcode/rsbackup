@@ -145,7 +145,7 @@ export RSYNC_RETVAL=$?
 echo      "            RETVAL: $RSYNC_RETVAL"
 
 # 12/09/2025 - PROBLEM: rsync output in warning without error in $LOG_ERROR
-# merge error lines of the rsync standard log
+# merge in $LOG_ERROR error lines of the rsync standard log
 cat $LOG_RSYNC | grep ERROR >> $LOG_ERROR
 
 ## define result variables
