@@ -3,7 +3,7 @@
 # Script for take system backup using rsync.
 # written by Gian Luca Vagnuzzi <vagnu00@gmx.com>
 #
-# rev. 06.07.2025
+# rev. 02.10.2025
 
 function envs_check {
 LOG_DIR="/var/log/backup"
@@ -146,7 +146,7 @@ echo      "            RETVAL: $RSYNC_RETVAL"
 
 # 12/09/2025 - PROBLEM: rsync output in warning without error in $LOG_ERROR
 # merge in $LOG_ERROR error lines of the rsync standard log
-cat $LOG_RSYNC | grep ERROR >> $LOG_ERROR
+#cat $LOG_RSYNC | grep ERROR >> $LOG_ERROR
 
 ## define result variables
 if [ $RSYNC_RETVAL = 23 ] || [ $RSYNC_RETVAL = 24 ]; then
@@ -280,19 +280,30 @@ bkd="5" # days
 #day_week=6" > $CONFIG_FILE
 
 # make exclusion file
-echo '- /dev/*
-- /mnt/*
-- /net/*
-- /media/*
-- /proc/*
-- /run/*
-- /sys/*
-- /var/lib/docker/*
+echo '- /dev/
+- /mnt/
+- /media/
+- /net/
+- /proc/
+- /run/
+- /sys/
+- /tmp/
+- /var/cache/apt/
+- /var/lib/clamav/
+- /var/lib/docker/
+- /var/lib/flatpak/
+- /var/log/journal/
+- /var/lib/systemd/coredump/
+- /var/tmp/
+- /usr/share/man/
+- /usr/share/doc/
 - lost+found
 - 00DELETE
 - .swap
-- *[T|t]rash*
-- Scaricati' > $RSYNC_EXCLUSIONS
+- *Trash*
+- *trash*
+- Scaricati
+- thinclient_drives' > $RSYNC_EXCLUSIONS
 
 #[ ! -e $CONFIG_FILE ]      && cp $DATA_DIR/.config_tpl $CONFIG_FILE          && echo "Config file for $BCK_NAME was successfully created."     || echo "!!! Config file for $BCK_NAME is already present."
 #[ ! -e $RSYNC_EXCLUSIONS ] && cp $DATA_DIR/.exclusions_tpl $RSYNC_EXCLUSIONS && echo "Exclusions file for $BCK_NAME was successfully created." || echo "!!! Exclusions file for $BCK_NAME is already present."

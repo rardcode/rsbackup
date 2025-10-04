@@ -23,10 +23,17 @@ ln -s /opt/rsbackup/rsbackup /usr/local/bin/
 7. REPORT: if `mail` command is installed, this script will use it & you will receive a more detailed report: check config of your Postfix or other MTA. Customize `$SRC_MAIL` & `$DEST_MAIL` envs in `config_<hostname>` file.
 
 8. IMPORTANT: Log rotation:\
-add `/var/log/backup/*.log` in\
-`/etc/logrotate.d/rsyslog` (Debian) or in\
-`/etc/logrotate.d/syslog-ng` (Manjaro) or in\
-`/usr/etc/logrotate.d/syslog` (OpenSUSE)
+```
+echo "/var/log/backup/*.log
+{
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+}" > /etc/logrotate.d/rsbackup
+```
 
 9. (optional) - Insert command in crontab with only desidered time:\
      `echo "00 00 * * * /root/bin/rsbackup -b <hostname>" >> /var/spool/cron/root`
