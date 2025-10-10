@@ -292,8 +292,8 @@ echo '- /dev/
 - /var/lib/clamav/
 - /var/lib/docker/
 - /var/lib/flatpak/
-- /var/log/journal/
 - /var/lib/systemd/coredump/
+- /var/log/journal/
 - /var/tmp/
 - /usr/share/man/
 - /usr/share/doc/
